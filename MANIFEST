@@ -1,0 +1,13 @@
+Lib-PDL-01.sch
+MANIFEST
+MANIFEST.SKIP
+Makefile.PL
+PDL.pm
+PDL.xs
+README
+TODO
+hints/dec_osf.pl
+hints/solaris_2.pl
+ospdl.h
+t/simple.t
+t/reshape.t
