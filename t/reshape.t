@@ -6,8 +6,17 @@ use ObjStore;
 use PDL::Lite;
 use ObjStore::Lib::PDL;
 
+# ObjStore::debug('bridge','txn');
+
+# PDL::Core::set_debugging(100);
+
+use ObjStore::Config;
+
+my $db = ObjStore::open($ObjStore::Config::TMP_DBDIR . "/perltest", 'update');
+
 begin 'update', sub {
-    my $p = ObjStore::Lib::PDL->new('transient', { Dims => [3,3] });
+    my $p = ObjStore::Lib::PDL->new($db, { Dims => [3,3] });
+    #$p->_debug(1);
     $p->setdims([4,4]);
     ok join('',$p->dims), '44';
 

@@ -1,3 +1,4 @@
+ChangeLog
 Lib-PDL-01.sch
 MANIFEST
 MANIFEST.SKIP
@@ -9,5 +10,6 @@ TODO
 hints/dec_osf.pl
 hints/solaris_2.pl
 ospdl.h
-t/simple.t
 t/reshape.t
+t/simple.t
+t/stargate.t

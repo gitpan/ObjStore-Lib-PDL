@@ -4,10 +4,12 @@ use Carp;
 use ObjStore;
 use base ('ObjStore::UNIVERSAL','PDL','DynaLoader');
 use vars qw($VERSION @OVERLOAD);
-$VERSION = '0.02';
+$VERSION = '0.50';
 BEGIN {
-    my %ov = @ObjStore::UNIVERSAL::OVERLOAD;
-    for (keys %ov) {
+    require PDL::Lite;
+    my @ops;
+    for (values %overload::ops) { push @ops, split /\s/ }
+    for (@ops) {
 	my $pdl_meth = overload::Method('PDL', $_);
 	if ($pdl_meth) {
 	    push @OVERLOAD, $_, $pdl_meth;
@@ -18,7 +20,6 @@ BEGIN {
 }
 use overload @OVERLOAD;
 
-require PDL::Lite;
 __PACKAGE__->bootstrap($VERSION);
 $ObjStore::SCHEMA{'ObjStore::Lib::PDL'}->
     load($ObjStore::Config::SCHEMA_DBDIR."/Lib-PDL-01.adb");
@@ -40,8 +41,26 @@ sub new {
     $o;
 }
 
+#*initialize = \&PDL::initialize;
+
+sub initialize {
+#    my ($class) = @_;
+    PDL->initialize();
+}
+
 # ObjStore::UNIVERSAL::isa is naughty!
 *isa = \&UNIVERSAL::isa;
+
+$ObjStore::STARGATE{PDL} = sub {
+    my ($class, $sv, $seg) = @_;
+    my $pt = $class eq 'PDL' ? 'ObjStore::Lib::PDL' : $class;
+    my @dims = $sv->dims;
+    my $o = $pt->new($seg, { Datatype => $sv->get_datatype, Dims => \@dims });
+    $o .= $sv;
+    $o;
+};
+
+END { _PurgeFreelist() }
 
 1;
 
@@ -74,5 +93,9 @@ PDL of dimensions [2,3] the layout is as follows:
 
 Be aware that this memory layout convention is dependent on the
 implementation of PDL.  However, it is very unlikely to change.
+
+=head1 SEE ALSO
+
+L<PDL>
 
 =cut

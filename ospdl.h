@@ -8,6 +8,7 @@ extern "C" {
 
 struct Lib__PDL1 : OSSVPV {
   static os_typespec *get_os_typespec();
+
   I32 *dims;
   void *data;
   I16 datatype;
@@ -21,6 +22,9 @@ struct Lib__PDL1 : OSSVPV {
   virtual char *rep_class(STRLEN *len);
   virtual dynacast_fn get_dynacast_meth();
 
+  void clear();
+  void copy(Lib__PDL1 &tmpl);
+  void allocate_cells(U32, int);
   void set_datatype(int ndt);
-  void setdims(I32 cnt, I32 *dsz);
+  void setdims(I32 cnt, I32 *dsz, void *tmpl=0);
 };
