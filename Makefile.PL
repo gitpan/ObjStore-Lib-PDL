@@ -14,12 +14,20 @@ my %args = (
 	    @PREFIX,
 	    PREREQ_PM	 => { ObjStore => '1.48' },
 	    NAME         => 'ObjStore::Lib::PDL',
-	    VERSION_FROM => './PDL.pm',
+	    VERSION_FROM => './lib/ObjStore/Lib/PDL.pm',
 	    OBJECT       => join(' ', 'PDL.o', "Lib-PDL-$v.o"),
-	    INC		 => &PDL_INCLUDE(),
+	    INC		 => join(' ', &PDL_INCLUDE(), '-Ilib/ObjStore/Lib/PDL'),
 	    OPTIMIZE => '-g',
 );
 
 WriteMakefile(add_os_args(%args));
 
 sub MY::postamble { os_schema_rule("Lib-PDL-$v.sch") }
+
+package MY;
+sub constants {
+    my $str = shift->SUPER::constants;
+    $str =~ s/^(BASEEXT) =.*$/
+	"$1 = libPDL" /me;
+    $str;
+}

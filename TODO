@@ -1,7 +1,3 @@
-faster versions of
-  at_c
-  set_c
-
 stop in siglongjmp
 stop in pdl_barf
 

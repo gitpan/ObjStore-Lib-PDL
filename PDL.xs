@@ -1,8 +1,16 @@
-/* partially ---C++-*- */
+/* partially -*-C++-*- */
 
+extern "C" {
+#include "EXTERN.h"
+#include "perl.h"
+#include "XSUB.h"
+}
+
+#include <osperl.h>
 #include "ospdl.h"
 
 extern "C" {
+#include "pdl.h"
 #define _pdlmagic_H_
 #define new new_pdl
 #include "pdlcore.h"
@@ -130,6 +138,105 @@ void Lib__PDL1::copy(Lib__PDL1 &tmpl)
   setdims(tmpl.ndims, tmpl.dims, tmpl.data);
 }
 
+Lib__PDL1_c::Lib__PDL1_c(Lib__PDL1 *pdl)
+{
+  assert(pdl);
+  data = pdl->data;
+  datatype = pdl->datatype;
+  ndims = pdl->ndims;
+  if (ndims < 10) {
+    dims = def_dims;
+    dimincs = def_dimincs;
+    loc = def_loc;
+  } else {
+    dims = new I32[ndims];
+    dimincs = new I32[ndims];
+    loc = new I32[ndims];
+  }
+  pos = 0;
+  I32 inc = 1;
+  for (int dx=0; dx < ndims; dx++) {
+    loc[dx] = 0;
+    dims[dx] = pdl->dims[dx];
+    dimincs[dx] = inc;
+    inc *= dims[dx];
+  }
+}
+
+Lib__PDL1_c::~Lib__PDL1_c()
+{
+  if (dims != def_dims)
+    delete dims;
+  if (dimincs != def_dimincs)
+    delete dimincs;
+  if (loc != def_loc)
+    delete loc;
+}
+
+void Lib__PDL1_c::seek(I32 *ats)
+{
+  pos = 0;
+  for (int di=0; di < ndims; di++) {
+    int at = ats[di];
+    if (at >= dims[di] || at < 0)
+      croak("Index %d out of range %d at dimension %d", at, dims[di], di);
+    pos += at * dimincs[di];
+    loc[di] = at;
+  }
+}
+
+void Lib__PDL1_c::seek(SV **ats)
+{
+  pos=0;
+  for (int di=0; di < ndims; di++) {
+    int at = osp_thr::sv_2aelem(ats[di]);
+    if (at >= dims[di] || at < 0)
+      croak("Index %d out of range %d at dimension %d", at, dims[di], di);
+    pos += at * dimincs[di];
+    loc[di] = at;
+  }
+}
+
+void Lib__PDL1_c::setdim(int dx, I32 to)
+{
+  if (to < 0 || to >= dims[dx])
+    croak("Index %d out of range %d at dimension %d", to, dims[dx], dx);
+  pos += (to - loc[dx]) * dimincs[dx];
+  loc[dx] = to;
+}
+
+void Lib__PDL1_c::set(SV *value)
+{
+  switch (datatype) {
+    case PDL_B: ((char*)data)[pos] = SvIV(value); break;
+    case PDL_S: ((short*)data)[pos] = SvIV(value); break;
+    case PDL_US: ((unsigned short*)data)[pos] = SvIV(value); break;
+    case PDL_L: ((long*)data)[pos] = SvIV(value); break;
+    case PDL_F: ((float*)data)[pos] = SvNV(value); break;
+    case PDL_D: ((double*)data)[pos] = SvNV(value); break;
+    default: croak("datatype unknown");
+  }
+}
+void Lib__PDL1_c::set(I32 value)
+{
+  switch (datatype) {
+    case PDL_B: ((char*)data)[pos] = value; break;
+    case PDL_S: ((short*)data)[pos] = value; break;
+    case PDL_US: ((unsigned short*)data)[pos] = value; break;
+    case PDL_L: ((long*)data)[pos] = value; break;
+    default: croak("datatype mismatch");
+  }
+}
+
+void Lib__PDL1_c::set(double value)
+{
+  switch (datatype) {
+    case PDL_F: ((float*)data)[pos] = value; break;
+    case PDL_D: ((double*)data)[pos] = value; break;
+    default: croak("datatype mismatch");
+  }
+}
+
 //------------------------------------------------- typemap
 
 static int bridge_counter = 0;
@@ -245,7 +352,10 @@ BOOT:
   SV *pdl_core_sv = perl_get_sv("PDL::SHARE", 0);
   if (!pdl_core_sv) croak("PDL is not loaded");
   PDLAPI = (Core*) SvIV(pdl_core_sv);
-  assert(sizeof(PDL_Long) == sizeof(os_int32)); // Is this the only assumption?
+  assert(sizeof(PDL_Long) == sizeof(os_int32)); // Is this our only assumption?
+  SV *APIV = perl_get_sv("ObjStore::Lib::PDL::APIVERSION", 1);
+  sv_setiv(APIV, OBJSTORE_LIB_PDL_VERSION);
+  SvREADONLY_on(APIV);
 
 void
 _allocate(CSV, seg)
@@ -310,6 +420,34 @@ void
 OSSVPV::upd_data()
 	CODE:
 	/* do nothing */
+
+void
+OSSVPV::at(...)
+	PPCODE:
+	Lib__PDL1_c pdl((Lib__PDL1*)THIS);
+	if (items-1 != pdl.ndims)
+	  croak("PDL->set expecting %d dimensions (not %d)", pdl.ndims, items-1);
+	pdl.seek(&ST(1));
+	SV *ret;
+	switch (pdl.datatype) {
+	case PDL_B: ret = newSViv(pdl.at_b()); break;
+	case PDL_S: ret = newSViv(pdl.at_s()); break;
+	case PDL_US: ret = newSViv(pdl.at_us()); break;
+	case PDL_L: ret = newSViv(pdl.at_l()); break;
+	case PDL_F: ret = newSVnv(pdl.at_f()); break;
+	case PDL_D: ret = newSVnv(pdl.at_d()); break;
+	default: croak("datatype unknown");
+	}
+	XPUSHs(sv_2mortal(ret));
+
+void
+OSSVPV::set(...)
+	PPCODE:
+	Lib__PDL1_c pdl((Lib__PDL1*)THIS);
+	if (items-1 != pdl.ndims + 1)
+	  croak("PDL->set expecting %d dimensions (not %d)", pdl.ndims, items-2);
+	pdl.seek(&ST(1));
+	pdl.set(ST(items-1));
 
 void
 DESTROY(sv)

@@ -4,7 +4,7 @@ use Carp;
 use ObjStore;
 use base ('ObjStore::UNIVERSAL','PDL','DynaLoader');
 use vars qw($VERSION @OVERLOAD);
-$VERSION = '0.50';
+$VERSION = '0.9';
 BEGIN {
     require PDL::Lite;
     my @ops;
@@ -92,7 +92,7 @@ PDL of dimensions [2,3] the layout is as follows:
   [4,5]
 
 Be aware that this memory layout convention is dependent on the
-implementation of PDL.  However, it is very unlikely to change.
+implementation of PDL.  It is, however, very unlikely to change.
 
 =head1 SEE ALSO
 
