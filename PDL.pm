@@ -4,20 +4,21 @@ use Carp;
 use ObjStore;
 use base ('ObjStore::UNIVERSAL','PDL','DynaLoader');
 use vars qw($VERSION @OVERLOAD);
-$VERSION = '0.01';
+$VERSION = '0.02';
 BEGIN {
-    # ugh!
-    my %fixup = (
-		 '""' => \&PDL::Core::string,
-		);
     my %ov = @ObjStore::UNIVERSAL::OVERLOAD;
     for (keys %ov) {
-#	warn "don't know how to fix '$_'" if !exists $fixup{$_};
+	my $pdl_meth = overload::Method('PDL', $_);
+	if ($pdl_meth) {
+	    push @OVERLOAD, $_, $pdl_meth;
+	} else {
+	    #warn "PDL does not overload '$_'\n";
+	}
     }
-    @OVERLOAD = %fixup;
 }
 use overload @OVERLOAD;
 
+require PDL::Lite;
 __PACKAGE__->bootstrap($VERSION);
 $ObjStore::SCHEMA{'ObjStore::Lib::PDL'}->
     load($ObjStore::Config::SCHEMA_DBDIR."/Lib-PDL-01.adb");
@@ -28,13 +29,19 @@ sub new {
     my $class = ref $this || $this;
     my $o = _allocate($class, $near);
     if ($how) {
-	$o->set_datatype($how->{Datatype})
-	    if exists $how->{Datatype};
+	if (exists $how->{Datatype}) {
+	    my $dt = $how->{Datatype};
+	    $dt = $dt->[0] if ref $dt;
+	    $o->set_datatype($dt);
+	}
 	$o->setdims($how->{Dims})
 	    if exists $how->{Dims};
     }
     $o;
 }
+
+# ObjStore::UNIVERSAL::isa is naughty!
+*isa = \&UNIVERSAL::isa;
 
 1;
 
@@ -58,19 +65,12 @@ ObjStore::Lib::PDL - Persistent PDL-compatible matrices
 =head1 DESCRIPTION
 
 The main thing of interest is that dimensions are arranged in memory
-such that the last dimension is the most packed.  For example, in a
-PDL of dimensions [3,3,3] the following locations are sequential in
-memory:
+such that the first dimension is the most packed.  For example, in a
+PDL of dimensions [2,3] the layout is as follows:
 
-  [2,1,0]
-  [2,1,1]
-  [2,1,2]
-
-Whereas the follow three elements are separated by relatively large gaps:
-
-  [0,2,1]
-  [1,2,1]
-  [2,2,1]
+  [0,1]
+  [2,3]
+  [4,5]
 
 Be aware that this memory layout convention is dependent on the
 implementation of PDL.  However, it is very unlikely to change.

@@ -1,3 +1,4 @@
-keep PDLs on a freelist
+stop in siglongjmp
+stop in pdl_barf
 
 done?

@@ -85,11 +85,14 @@ void Lib__PDL1::set_datatype(int ndt)
 
 //------------------------------------------------- typemap
 
+static osp_bridge_ring Freelist(0);
+
 struct pdl_bridge : osp_smart_object {
   osp_bridge_ring link; /*XXX*/
   pdl *proxy;
   pdl_bridge();
   void init(Lib__PDL1 *pv);
+  virtual void freelist();
   virtual ~pdl_bridge();
 };
 
@@ -123,6 +126,11 @@ void pdl_bridge::init(Lib__PDL1 *pv)
   proxy->nvals = inc;
 }
 
+void pdl_bridge::freelist()
+{
+  link.attach(&Freelist);
+}
+
 pdl_bridge::~pdl_bridge()
 {
   proxy->data = 0;
@@ -139,7 +147,10 @@ static void *ospdl_dynacast(void *obj, HV *stash)
     ospv_bridge *br = (ospv_bridge*) obj;
     pdl_bridge *pdlbr;
     if (!br->info) {
-	br->info = pdlbr = new pdl_bridge();
+	if (Freelist.empty())
+	  br->info = pdlbr = new pdl_bridge();
+	else
+	  br->info = pdlbr = (pdl_bridge*) Freelist.pop();
 	pdlbr->init((Lib__PDL1*) br->ospv());
     }
     pdlbr = (pdl_bridge*) br->info;
@@ -212,3 +223,13 @@ OSSVPV::upd_data()
 	CODE:
 	/* do nothing */
 
+void
+DESTROY(sv)
+	SV *sv
+	PPCODE:
+	/* Need to avoid attempting to destroy real PDLs! */
+	if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVMG) {
+	  ospv_bridge* br = (ospv_bridge*) SvIV(sv);
+	  if (br->dynacast == ospdl_dynacast)
+	    br->leave_perl();
+	}
