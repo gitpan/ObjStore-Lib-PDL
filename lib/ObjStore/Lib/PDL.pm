@@ -4,15 +4,20 @@ use Carp;
 use ObjStore;
 use base ('ObjStore::UNIVERSAL','PDL','DynaLoader');
 use vars qw($VERSION @OVERLOAD);
-$VERSION = '0.9';
+$VERSION = '0.92';
 BEGIN {
     require PDL::Lite;
     my @ops;
     for (values %overload::ops) { push @ops, split /\s/ }
     for (@ops) {
-	my $pdl_meth = overload::Method('PDL', $_);
-	if ($pdl_meth) {
-	    push @OVERLOAD, $_, $pdl_meth;
+	my $meth;
+	if ($_ eq '""') {
+	    $meth = overload::Method('ObjStore::UNIVERSAL', $_);
+	} else {
+	    $meth = overload::Method('PDL', $_);
+	}
+	if ($meth) {
+	    push @OVERLOAD, $_, $meth;
 	} else {
 	    #warn "PDL does not overload '$_'\n";
 	}
@@ -55,7 +60,9 @@ $ObjStore::STARGATE{PDL} = sub {
     my ($class, $sv, $seg) = @_;
     my $pt = $class eq 'PDL' ? 'ObjStore::Lib::PDL' : $class;
     my @dims = $sv->dims;
-    my $o = $pt->new($seg, { Datatype => $sv->get_datatype, Dims => \@dims });
+    my $dt = $sv->get_datatype;
+    my $spec = { Datatype => $dt, Dims => \@dims };
+    my $o = $pt->new($seg, $spec);
     $o .= $sv;
     $o;
 };
@@ -97,5 +104,14 @@ implementation of PDL.  It is, however, very unlikely to change.
 =head1 SEE ALSO
 
 L<PDL>
+
+=head1 AUTHOR
+
+Copyright © 1999 Joshua Nathaniel Pritikin.  All rights reserved.
+
+This package is free software and is provided "as is" without express
+or implied warranty.  It may be used, redistributed and/or modified
+under the terms of the Perl Artistic License (see
+http://www.perl.com/perl/misc/Artistic.html)
 
 =cut

@@ -21,8 +21,10 @@ extern "C" {
 #undef croak
 #define croak osp_croak
 
+static int Debug=0;
 static HV *PDLStash1;
 static Core *PDLAPI;
+static pdl *pdl_out_of_scope;
 
 Lib__PDL1::Lib__PDL1()
 {
@@ -37,6 +39,7 @@ Lib__PDL1::~Lib__PDL1()
 
 void Lib__PDL1::clear()
 {
+  dims=0;
   if (data) delete [] data;
   if (dims) delete [] dims;
 }
@@ -62,6 +65,8 @@ void Lib__PDL1::allocate_cells(U32 cnt, int zero)
 
   int width = PDLAPI->howbig(datatype);
   if (cnt > 1024 * 1024 * 1024) croak("PDL size > 1GB; are you serious?");
+  assert(!data);
+  assert(cnt == calc_nvals());
   switch (datatype) {
     case PDL_B:
       assert(width == sizeof(PDL_Byte) && width == sizeof(char));
@@ -99,35 +104,38 @@ void Lib__PDL1::allocate_cells(U32 cnt, int zero)
   if (zero) Zero(data, cnt * width, char);
 }
 
+U32 Lib__PDL1::calc_nvals()
+{
+  U32 vals = 1;
+  for (int xx=0; xx < ndims; xx++) vals *= dims[xx];
+  return vals;
+}
+
 void Lib__PDL1::setdims(I32 cnt, I32 *dsz, void *tmpl)
 {
   int zero = ndims == 0 && !tmpl;
   assert(cnt >= 0);
-  if (data) { delete [] data; data=0; }
+  void *old_data = data;
+  data=0;
   if (dims) { delete [] dims; dims=0; }
   ndims = cnt;
 
-  U32 cells = 1;
   NEW_OS_ARRAY(dims, os_segment::of(this), os_typespec::get_signed_int(),
 		 int, cnt);
-  for (int xx=0; xx < cnt; xx++) {
-    cells *= dsz[xx];
-    dims[xx] = dsz[xx];
-  }
+  Copy(dsz, dims, ndims, int);
+  U32 cells = calc_nvals();
   allocate_cells(cells, zero);
-  if (tmpl)
-    Copy(tmpl, data, cells * PDLAPI->howbig(datatype), char);
+  if (tmpl) Copy(tmpl, data, cells * PDLAPI->howbig(datatype), char);
+  if (old_data) delete [] old_data;
 }
 
 void Lib__PDL1::set_datatype(int ndt)
 {
+  /* be smart about preserving existing values? XXX */
   if (datatype == ndt) return;
-  datatype = ndt;
   if (data) { delete [] data; data=0; }
-	/* be smart about preserving existing values? XXX */
-  U32 cnt = 1;
-  for (int xx=0; xx < ndims; xx++) cnt += dims[xx];
-  allocate_cells(cnt, 0);
+  datatype = ndt;
+  allocate_cells(calc_nvals(), 0);
 }
 
 void Lib__PDL1::copy(Lib__PDL1 &tmpl)
@@ -240,51 +248,103 @@ void Lib__PDL1_c::set(double value)
 //------------------------------------------------- typemap
 
 static int bridge_counter = 0;
-static osp_bridge_ring Freelist(0);
+static osp_ring Freelist(0);
 
 struct pdl_bridge : osp_smart_object {
-  osp_bridge_ring link;
+  static osp_ring All;
+
+  osp_ring link;
   pdl *proxy;
+
+#if OSP_BRIDGE_TRACE
+  osp_ring al; /* not thread-safe XXX */
+  SV *where;
+  void *bridge;
+#endif
+
   pdl_bridge();
   void init(Lib__PDL1 *pv);
+  virtual void unref();
   virtual void freelist();
   virtual ~pdl_bridge();
 };
 
+osp_ring pdl_bridge::All(0);
+
 pdl_bridge::pdl_bridge()
   : link(this)
+#if OSP_BRIDGE_TRACE
+     , al(this), where(0)
+#endif
 {
   ++bridge_counter;
-  proxy = PDLAPI->create(PDL_PERM);
-  PDLAPI->SetSV_PDL(newSV(0), proxy);
-  SvREFCNT_inc( (SV*) proxy->sv);  // is in our scope
-//  sv_dump( (SV*) proxy->sv);
+  proxy=0;
 }
 
+static void init_out_of_scope()
+{
+  PDL_Long d[1] = {0};
+  pdl *it;
+  pdl_out_of_scope = it = PDLAPI->null();
+  it->state |= PDL_DESTROYING; //always avoid destruction
+}
+
+// also called after setdims or set_datatype
 void pdl_bridge::init(Lib__PDL1 *pv)
 {
+#if OSP_BRIDGE_TRACE
+  if (al.empty()) {
+    SvREFCNT_dec(where);
+    dSP;
+    PUSHSTACK;
+    PUSHMARK(SP);
+    XPUSHs(&PL_sv_no);
+    perl_call_pv("Carp::longmess", G_SCALAR);
+    SPAGAIN;
+    where = SvREFCNT_inc(POPs);
+    PUTBACK;
+    POPSTACK;
+    al.attach(All);
+  }
+#endif
+
+  assert(pv);
+  if (!proxy) {
+    proxy = PDLAPI->create(PDL_PERM);
+  }
+  if (!proxy->sv) {
+    PDLAPI->SetSV_PDL(newSV(0), proxy);
+    SvREFCNT_inc((SV*) proxy->sv);  // is owned by us
+    //Perl_sv_dump( (SV*) proxy->sv);
+  }
   proxy->state = PDL_DONTTOUCHDATA | PDL_ALLOCATED;
   if (!pv->data) {
     assert(pv->ndims == 0);
     pv->allocate_cells(1, 1);
   }
   if (proxy->ndims != pv->ndims) {
-    if (proxy->ndims > PDL_NDIMS)
+    if (proxy->dims != proxy->def_dims)
+	free(proxy->dims);
+    if (proxy->dimincs != proxy->def_dimincs)
 	free(proxy->dimincs);
+
     if (pv->ndims > PDL_NDIMS) {
-        proxy->dimincs = (int*) malloc(pv->ndims*sizeof(*(proxy->dimincs)));
+        proxy->dims = (int*) malloc(pv->ndims*sizeof(int));
+	if (!proxy->dims) croak("Out of memory");
+        proxy->dimincs = (int*) malloc(pv->ndims*sizeof(int));
 	if (!proxy->dimincs) croak("Out of memory");
-    }
-    else
+    } else {
+	proxy->dims = proxy->def_dims;
 	proxy->dimincs = proxy->def_dimincs;
+    }
   }
   proxy->threadids = proxy->def_threadids;
   proxy->threadids[0] = pv->ndims;
   proxy->datatype = pv->datatype;
   proxy->ndims = pv->ndims;
-  proxy->dims = pv->dims;
   proxy->data = pv->data;
 
+  Copy(pv->dims, proxy->dims, pv->ndims, int);
   int inc = 1;
   for (int i=0; i < proxy->ndims; i++) {
     proxy->dimincs[i] = inc; inc *= proxy->dims[i];
@@ -292,18 +352,45 @@ void pdl_bridge::init(Lib__PDL1 *pv)
   proxy->nvals = inc;
 }
 
-void pdl_bridge::freelist()
+void pdl_bridge::unref()
 {
-  link.attach(&Freelist);
+  assert(proxy);
+  if (proxy->sv) {
+    SvREFCNT_dec((SV*) proxy->sv);
+    if (SvREFCNT((SV*) proxy->sv) > 1) {
+      SV *sv = (SV*) proxy->sv;
+      //      sv_setiv(sv, (IV) pdl_out_of_scope);
+      //proxy->sv = 0;
+      SvREFCNT_dec(sv);
+      //PDLAPI->destroy(proxy);
+      if (Debug) warn("%x undef 1", this);
+    } else {
+      SvREFCNT_dec((SV*) proxy->sv);
+      if (Debug) warn("%x undef 2", this);
+    }
+  } else {
+      PDLAPI->destroy(proxy);
+      if (Debug) warn("%x undef 3", this);
+  }
+  proxy=0;
+}
+
+void pdl_bridge::freelist() 
+{
+  if (Debug >= 1) warn("pdl_bridge::freelist %x", this);
+  link.attach(Freelist);
+#if OSP_BRIDGE_TRACE
+  al.detach();
+#endif
 }
 
 pdl_bridge::~pdl_bridge()
 {
+  if (!link.empty()) link.detach();
   --bridge_counter;
-  proxy->data = 0;
-  proxy->dims = proxy->def_dims;
-  //warn("nuking %d", proxy);
-  SvREFCNT_dec(proxy->sv);
+#if OSP_BRIDGE_TRACE
+  SvREFCNT_dec(where);
+#endif
 }
 
 static void *ospdl_dynacast(void *obj, HV *stash, int failok)
@@ -313,17 +400,26 @@ static void *ospdl_dynacast(void *obj, HV *stash, int failok)
   }
   else if (stash == PDLStash1) {
     ospv_bridge *br = (ospv_bridge*) obj;
+    //BrDEBUG_set(br, 1);
     pdl_bridge *pdlbr;
+    Lib__PDL1 *pv = (Lib__PDL1 *) br->ospv();
+    if (!pv)
+      croak("Attempt to use PDL outside of transaction scope");
     if (!br->info) {
-	if (Freelist.empty()) {
-	  br->info = pdlbr = new pdl_bridge();
-          //warn("creating proxy for 0x%x", br->ospv());
+	pdlbr = (pdl_bridge*) Freelist.next_self();
+	if (!pdlbr) {
+	  pdlbr = new pdl_bridge();
+          if (Debug >= 2) warn("creating proxy for 0x%x", br->ospv());
         }
 	else {
-	  br->info = pdlbr = (pdl_bridge*) Freelist.pop();
-          //warn("reuse proxy for 0x%x", br->ospv());
+	  pdlbr->link.detach();
+          if (Debug >= 2) warn("reuse proxy for 0x%x", br->ospv());
         }
-	pdlbr->init((Lib__PDL1*) br->ospv());
+	pdlbr->init(pv);
+	br->info = pdlbr;
+#if OSP_BRIDGE_TRACE
+	pdlbr->bridge = br;
+#endif
     }
     pdlbr = (pdl_bridge*) br->info;
     return pdlbr->proxy;
@@ -352,10 +448,11 @@ BOOT:
   SV *pdl_core_sv = perl_get_sv("PDL::SHARE", 0);
   if (!pdl_core_sv) croak("PDL is not loaded");
   PDLAPI = (Core*) SvIV(pdl_core_sv);
-  assert(sizeof(PDL_Long) == sizeof(os_int32)); // Is this our only assumption?
+  assert(sizeof(PDL_Long) == sizeof(os_int32));
   SV *APIV = perl_get_sv("ObjStore::Lib::PDL::APIVERSION", 1);
   sv_setiv(APIV, OBJSTORE_LIB_PDL_VERSION);
   SvREADONLY_on(APIV);
+  init_out_of_scope();
 
 void
 _allocate(CSV, seg)
@@ -372,12 +469,60 @@ _allocate(CSV, seg)
 void
 _PurgeFreelist()
 	CODE:
-	while (!Freelist.empty()) {
-	  delete (pdl_bridge*) Freelist.pop();
+	pdl_bridge *pdlbr;
+	while (pdlbr = (pdl_bridge*) Freelist.next_self()) {
+	  delete pdlbr;
 	}
 	if (0 && bridge_counter)
 	  warn("ObjStore::Lib::PDL: %d proxies are still in use",
 		bridge_counter);
+
+int
+_set_debug(lv)
+	int lv
+	CODE:
+	RETVAL = Debug;
+	Debug = lv;
+	OUTPUT:
+	RETVAL
+
+void
+_inuse_bridges(...)
+	PROTOTYPE: ;$
+	PPCODE:
+	IV show = items>0? sv_true(ST(0)) : 0;
+	IV cnt=0;
+#if OSP_BRIDGE_TRACE
+	pdl_bridge *br = (pdl_bridge*) pdl_bridge::All.next_self();
+	while (br) {
+	  if (show) {
+	    SV *sv = sv_2mortal(newSVpv("",0));
+	    sv_catpvf(sv,"[%d]pdl_bridge 0x%x\n", cnt, br);
+	    sv_catpvf(sv,"  bridge       : 0x%x\n", br->bridge);
+	    sv_catpvf(sv,"  proxy        : 0x%x\n", br->proxy);
+	    if (br->proxy)
+	      sv_catpvf(sv,"  proxy->sv    : 0x%x\n", br->proxy->sv);
+	    if (br->where)
+	      sv_catpvf(sv,"  created%s\n", SvPV(br->where, PL_na));
+	    XPUSHs(sv);
+	  }
+	  ++cnt;
+	  br = (pdl_bridge*) br->al.next_self();
+	}
+#else
+	warn("_inuse_bridges detail is not available");
+#endif
+
+void
+OSSVPV::getndims()
+	PPCODE:
+	XPUSHs(sv_2mortal(newSViv(((Lib__PDL1*)THIS)->ndims)));
+
+void
+OSSVPV::getdim(y)
+	int y;
+	PPCODE:
+	XPUSHs(sv_2mortal(newSViv(((Lib__PDL1*)THIS)->dims[y])));
 
 void
 OSSVPV::setdims(sv)
@@ -453,9 +598,8 @@ void
 DESTROY(sv)
 	SV *sv
 	PPCODE:
-	/* Need to avoid attempting to destroy real PDLs! */
-	if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVMG) {
-	  ospv_bridge* br = (ospv_bridge*) SvIV(sv);
-	  if (br->dynacast == ospdl_dynacast)
-	    br->leave_perl();
+	ospv_bridge* br;
+	br= (ospv_bridge*) typemap_any::try_decode(sv, ospdl_dynacast, 0);
+	if (br) {
+	  br->leave_perl();
 	}

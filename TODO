@@ -1,3 +1,5 @@
+optimize stringification?
+
 stop in siglongjmp
 stop in pdl_barf
 

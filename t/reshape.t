@@ -1,18 +1,15 @@
 # -*-perl-*- math
 use strict;
-use Test; plan test => 3, todo => [3];
+use Test; plan test => 4, todo => [3];
 
 use ObjStore;
-use PDL::Lite;
 use ObjStore::Lib::PDL;
 
 # ObjStore::debug('bridge','txn');
-
 # PDL::Core::set_debugging(100);
 
-use ObjStore::Config;
-
-my $db = ObjStore::open($ObjStore::Config::TMP_DBDIR . "/perltest", 'update');
+use vars qw($db);
+require "t/db.pm";
 
 begin 'update', sub {
     my $p = ObjStore::Lib::PDL->new($db, { Dims => [3,3] });
@@ -27,7 +24,11 @@ begin 'update', sub {
     my $byte = PDL::byte()->[0];
     $p->set_datatype($byte);
 
+#    warn ObjStore::Lib::PDL::_inuse_bridges(1);
+
     ok $p->get_datatype, $byte;
     ok $p->at(0,1), 254;
 };
 die if $@;
+
+ok !ObjStore::_inuse_bridges();

@@ -1,7 +1,7 @@
 # -*-perl-*- math
 use strict;
 use Test;
-BEGIN { plan test => 14 }
+BEGIN { plan test => 15 }
 
 use ObjStore;
 use PDL::Lite;
@@ -28,3 +28,4 @@ begin 'update', sub {
 };
 die if $@;
 
+ok !ObjStore::_inuse_bridges();

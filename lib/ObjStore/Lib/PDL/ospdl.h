@@ -26,6 +26,7 @@ struct Lib__PDL1 : OSSVPV {
 
   void clear();
   void copy(Lib__PDL1 &tmpl);
+  U32 calc_nvals();
   void allocate_cells(U32, int);
   void set_datatype(int ndt);
   void setdims(I32 cnt, I32 *dsz, void *tmpl=0);

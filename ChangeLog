@@ -1,3 +1,11 @@
+1999-01-12  Joshua Pritikin  <joshua.pritikin@db.com>
+
+	* Release 0.92.
+
+1998-11-06  Joshua Pritikin  <joshua.pritikin@db.com>
+
+	* Avoid leaving a trail of corrupted SVs.  Added tests.
+
 1998-10-30  Joshua Pritikin  <joshua.pritikin@db.com>
 
 	* Split into two classes PDL & cursor for easy C++ manipulation.
